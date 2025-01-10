@@ -1,0 +1,30 @@
+[submodule "domain_classifier"]
+	path = domain_classifier
+	url = git@github.com:mbitaab/domain_classifier.git
+	branch = main
+	update = merge
+[submodule "shop_classifier"]
+	path = shop_classifier
+	url = git@github.com:mbitaab/classifier_shop.git
+	branch = main
+	update = merge
+[submodule "domain_feature_extractor"]
+	path = domain_feature_extractor
+	url = git@github.com:mbitaab/domain_feature_extractor.git
+	branch = main
+	update = merge
+[submodule "autocheckout"]
+	path = autocheckout
+	url = git@github.com:mbitaab/autocheckout.git
+	branch = main
+	update = merge
+[submodule "domain_feed"]
+	path = domain_feed
+	url = git@github.com:mbitaab/domain_monitoring_feed.git
+	branch = main
+	update = merge
+[submodule "domain_fetcher"]
+	path = domain_fetcher
+	url = git@github.com:mbitaab/domain_fetcher.git
+	branch = main
+	update = merge

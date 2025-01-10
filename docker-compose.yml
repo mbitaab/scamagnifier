@@ -1,0 +1,154 @@
+services:
+# **************** MongoDB ****************
+  mongodb:
+    image: mongo:latest
+    #container_name: mongodb_pipline
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${SCAMAGNIFIER_MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${SCAMAGNIFIER_MONGO_USER_PASSWORD}
+      SCAMAGNIFIER_EXT_MONGO_NORMAL_USERNAME: ${SCAMAGNIFIER_MONGO_NORMAL_USERNAME}
+      SCAMAGNIFIER_EXT_MONGO_NORMAL_PASSWORD: ${SCAMAGNIFIER_MONGO_NORMAL_PASSWORD}
+      SCAMAGNIFIER_EXT_MONGO_DB: ${SCAMAGNIFIER_MONGO_DB}
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - smagnifier_mongodb_volume:/data/db
+      - ./docker-entrypoint-initdb.d/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks:
+      - app-network-scamagnifier
+
+# ************** selenium grid **************
+  selenium-grid:
+    image: seleniarm/standalone-chromium:latest
+    #container_name: selenium_scamagnifier
+    ports:
+      - "4444:4444"
+    environment:
+      SE_NODE_MAX_SESSIONS: 100
+      SE_NODE_OVERRIDE_MAX_SESSIONS: "true"
+      SE_NODE_SESSION_TIMEOUT: 1000
+      PYTHONUNBUFFERED: 1
+    shm_size: 4g
+    volumes:
+      - /dev/shm:/dev/shm
+    networks:
+      - app-network-scamagnifier
+    deploy:
+      resources:
+        limits:
+          cpus: '16'
+          memory: 32G
+        reservations:
+          cpus: '4'
+          memory: 8G
+
+#  ************** push domain to DB **************
+  scamagnifier-domain-feeder:
+    build: ./domain_feed
+    #container_name: domain-feeder-scamagnifier
+    environment:
+      MONGO_USERNAME: ${SCAMAGNIFIER_MONGO_NORMAL_USERNAME}
+      MONGO_PASSWORD: ${SCAMAGNIFIER_MONGO_NORMAL_PASSWORD}
+      MONGO_HOSTNAME:  ${SCAMAGNIFIER_MONGO_HOST}
+      MONGO_PORT: ${SCAMAGNIFIER_MONGO_PORT}
+      MONGO_DB: ${SCAMAGNIFIER_MONGO_DB}
+      LIMIT: 0
+    command: ["python", "./src/app.py"]
+    volumes:
+      - smagnifier_data_volume:/app/data
+    networks:
+      - app-network-scamagnifier
+#  ************** domain fetch from DB **************
+  scamagnifier-domain-fetcher:
+    build: ./domain_fetcher
+    #container_name: domain-fetcher-scamagnifier
+    environment:
+      MONGO_USERNAME: ${SCAMAGNIFIER_MONGO_NORMAL_USERNAME}
+      MONGO_PASSWORD: ${SCAMAGNIFIER_MONGO_NORMAL_PASSWORD}
+      MONGO_HOSTNAME:  ${SCAMAGNIFIER_MONGO_HOST}
+      MONGO_PORT: ${SCAMAGNIFIER_MONGO_PORT}
+      MONGO_DB: ${SCAMAGNIFIER_MONGO_DB}
+      LIMIT: 0
+    command: ["python", "./app.py", "--date", "${SCAMAGNIFIER_DATE}", "--output_file", "/app/data/${SCAMAGNIFIER_DIR}/domains.txt","--job_number","${JOB_NUMBER}","--job_index","${JOB_INDEX}"]
+    volumes:
+      - smagnifier_data_volume:/app/data
+    networks:
+      - app-network-scamagnifier
+
+# ************** domain feature extractor **************
+  scamagnifier-feature-extractor:
+    build: ./domain_feature_extractor
+    #container_name: domain-feature-extractor-1
+    environment:
+      SELENIUM_ADDRESS: "selenium-grid:4444"
+      NUMBER_PROC: 4
+    command: ["python", "./src/app.py", "--input_file", "/app/data/${SCAMAGNIFIER_DIR}/domains.txt", "--source_path", "/app/data/${SCAMAGNIFIER_DIR}/source_home", "--output_file", "/app/data/${SCAMAGNIFIER_DIR}/features.pkl"]
+    volumes:
+      - smagnifier_data_volume:/app/data
+    networks:
+      - app-network-scamagnifier
+
+# ************** domain classifier **************
+
+  scamagnifier-domain-classifier:
+    build: ./domain_classifier
+    #container_name: domain-classifier
+    command: ["python", "./src/app.py", "--input_file", "/app/data/${SCAMAGNIFIER_DIR}/features.pkl" , "--output_file" ,"/app/data/${SCAMAGNIFIER_DIR}/classify.csv"]
+    volumes:
+      - smagnifier_data_volume:/app/data
+    networks:
+      - app-network-scamagnifier
+
+# ************** shop classifier **************
+  scamagnifier-shop-classifier:
+    build: ./shop_classifier
+    #container_name: shop_classifier
+    command: ["python", "./src/app.py", "--input_dir", "/app/data/${SCAMAGNIFIER_DIR}/source_home", "--input_file", "/app/data/${SCAMAGNIFIER_DIR}/classify.csv", "--output_file", "/app/data/${SCAMAGNIFIER_DIR}/shop.csv"]
+    environment:
+      TRANSFORMERS_CACHE: /app/data/hf_cache/
+    volumes:
+      - smagnifier_data_volume:/app/data
+    networks:
+      - app-network-scamagnifier
+    
+# ************** auto checkout **************
+  autocheck:
+    build: ./autocheckout
+    #container_name: autocheck
+    command: ["python", "./src/app.py", "--input_bp", "/app/data/${SCAMAGNIFIER_DIR}/classify.csv", 
+                                        "--input_ec", "/app/data/${SCAMAGNIFIER_DIR}/shop.csv",
+                                        "--log_file_address", "/app/data/${SCAMAGNIFIER_DIR}/log.txt",
+                                        "--p_log_file_address","/app/data/${SCAMAGNIFIER_DIR}/log.jsonl",
+                                        "--screen_file_address" , "/app/data/${SCAMAGNIFIER_DIR}/screenshots/",
+                                        "--html_file_address" , "/app/data/${SCAMAGNIFIER_DIR}/source_checkout/"]
+    environment:
+      SELENIUM_ADDRESS: "http://10.90.78.133:4451"
+    volumes:
+      - smagnifier_data_volume:/app/data
+    networks:
+      - app-network-scamagnifier
+
+
+# **************** Volume ****************
+volumes:
+  smagnifier_data_volume:
+    driver: local
+    driver_opts:
+      type: none
+      o: 'bind'
+      device: ${VOLUME_DIR}
+  smagnifier_mongodb_volume:
+    driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: ${VOLUME_MONGO}
+
+# # **************** Network ****************
+networks:
+  app-network-scamagnifier:
+    driver: bridge
+    name: app-network-scamagnifier
+
+
